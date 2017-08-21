@@ -52,18 +52,24 @@ d bug - random attiny reset during roast
 #define ROASTPROFILE 1
 #define ROASTTEMP 2
 
-LiquidCrystal_SR2W lcd(SRDATAEN,SRCLK, NEGATIVE);
-MAX6675 thermocouple(THERMCLK, THERMCS, THERMDO);
-//SendOnlySoftwareSerial Serial(TXPIN); //tx
-
 bool started = false;
 unsigned long curr_time = 0;
 unsigned long menu_time = 0;
 short stage = 0;
-short target_temp = 0;
+double pidout = 0.0; // pid output
+double target_temp = 0.0; // pid setpoint
+double tempreading = 0.0; // pid input
+int WindowSize = 5000;
+unsigned long windowStartTime;
 double lastpot;
 byte roastmode = ROASTMANUAL;
 byte roastprofile = 0;
+
+PID pid(&tempreading, &pidout, &target_temp,2,5,1, DIRECT);
+LiquidCrystal_SR2W lcd(SRDATAEN,SRCLK, NEGATIVE);
+MAX6675 thermocouple(THERMCLK, THERMCS, THERMDO);
+//SendOnlySoftwareSerial Serial(TXPIN); //tx
+
 
 void mainMenu();
 void profileMenu();
@@ -108,6 +114,9 @@ void setup()
     lastpot = analogRead(POTPIN);
   }
   delay(2000);
+
+  pid.SetOutputLimits(0, WindowSize);
+  pid.SetMode(AUTOMATIC);
 }
 
 void loop()
@@ -127,6 +136,7 @@ void loop()
     menu_time = millis();
   }
   
+  windowStartTime = millis();
   doRoast();
 }
 
@@ -195,7 +205,6 @@ void doRoast()
 
   analogReference(DEFAULT);
   double potreading = 0.0;
-  double tempreading = 0.0;
   for(int i=0; i<5; i++)
   {
     // Thermo reading
@@ -211,6 +220,9 @@ void doRoast()
   }
   potreading /= 5;
   tempreading /= 5;
+
+  // PID calculation based on current temperature
+  pid.Compute();
 
   float val = (float)(potreading-POTMIN)/(float)(POTMAX-POTMIN);
   if(val < 0 || curr_time < 1.0) val = 0;
@@ -241,7 +253,13 @@ void doRoast()
     else
     {
       // Heater control
-      if(tempreading < target_temp)
+   //   if(tempreading < target_temp)
+      unsigned long now = millis();
+      if(now - windowStartTime>WindowSize)
+      {
+        windowStartTime += WindowSize;
+      }
+      if(pidout > now - windowStartTime)
       {
         digitalWrite(HEATERPIN, HIGH);
         lcd.setCursor(0,0);
@@ -274,7 +292,13 @@ void doRoast()
     analogWrite(PWMPIN, ROASTTEMPFANSPEED*255);
     target_temp = val*MAXTEMP;
     // Heater control
-    if(tempreading < target_temp)
+//    if(tempreading < target_temp)
+    unsigned long now = millis();
+    if(now - windowStartTime>WindowSize)
+    {
+      windowStartTime += WindowSize;
+    }
+    if(pidout > now - windowStartTime)
     {
       digitalWrite(HEATERPIN, HIGH);
       lcd.setCursor(0,0);
