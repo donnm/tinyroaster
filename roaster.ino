@@ -47,6 +47,7 @@ d bug - random attiny reset during roast
 #define LCD_COLS 20
 #define MAXTEMP 280
 #define ROASTTEMPFANSPEED 0.8
+#define USEPID 1
 
 #define ROASTMANUAL 0
 #define ROASTPROFILE 1
@@ -64,6 +65,8 @@ unsigned long windowStartTime;
 double lastpot;
 byte roastmode = ROASTMANUAL;
 byte roastprofile = 0;
+short *stages_secs;
+short *stages_temp;
 
 PID pid(&tempreading, &pidout, &target_temp,2,5,1, DIRECT);
 LiquidCrystal_SR2W lcd(SRDATAEN,SRCLK, NEGATIVE);
@@ -85,8 +88,19 @@ struct profile {
 };
 
 #define NUM_STAGES 9
+short city_stages_secs[] = {0,   160, 220, 280, 340, 400, 460, 520, 640};
+short city_stages_temp[] = {200, 208, 212, 216, 220, 225, 230, 235, 0  };
+
+short citypluss_stages_secs[] = {0,   160, 220, 280, 340, 400, 460, 520, 640};
+short citypluss_stages_temp[] = {200, 210, 215, 220, 225, 230, 240, 245, 0  };
+
+short vienna_stages_secs[] = {0,   160, 220, 280, 340, 400, 460, 520, 640};
+short vienna_stages_temp[] = {200, 210, 215, 225, 230, 245, 255, 260, 0  };
+
+/* Light roast not full first crack
 short stages_secs[] = {0,   160, 220, 280, 340, 400, 460, 520, 640};
 short stages_temp[] = {200, 204, 208, 212, 216, 220, 224, 230, 0  };
+*/
 
 void setup()
 {
@@ -184,12 +198,18 @@ void profileMenu()
   {
     case 1:
       lcd.print(F("city"));
+      stages_secs = city_stages_secs;
+      stages_temp = city_stages_temp;
       break;
     case 2:
       lcd.print(F("city+"));
+      stages_secs = citypluss_stages_secs;
+      stages_temp = citypluss_stages_temp;
       break;
     case 3:
       lcd.print(F("vienna"));
+      stages_secs = vienna_stages_secs;
+      stages_temp = vienna_stages_temp;
       break;
   }
   roastprofile = pos-1;
@@ -253,13 +273,16 @@ void doRoast()
     else
     {
       // Heater control
-   //   if(tempreading < target_temp)
+#if USEPID
       unsigned long now = millis();
       if(now - windowStartTime>WindowSize)
       {
         windowStartTime += WindowSize;
       }
       if(pidout > now - windowStartTime)
+#else
+      if(tempreading < target_temp)
+#endif
       {
         digitalWrite(HEATERPIN, HIGH);
         lcd.setCursor(0,0);
@@ -292,13 +315,16 @@ void doRoast()
     analogWrite(PWMPIN, ROASTTEMPFANSPEED*255);
     target_temp = val*MAXTEMP;
     // Heater control
-//    if(tempreading < target_temp)
-    unsigned long now = millis();
-    if(now - windowStartTime>WindowSize)
-    {
-      windowStartTime += WindowSize;
-    }
-    if(pidout > now - windowStartTime)
+#if USEPID
+      unsigned long now = millis();
+      if(now - windowStartTime>WindowSize)
+      {
+        windowStartTime += WindowSize;
+      }
+      if(pidout > now - windowStartTime)
+#else
+      if(tempreading < target_temp)
+#endif
     {
       digitalWrite(HEATERPIN, HIGH);
       lcd.setCursor(0,0);
