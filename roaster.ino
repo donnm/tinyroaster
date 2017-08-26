@@ -47,7 +47,7 @@ d bug - random attiny reset during roast
 #define LCD_COLS 20
 #define MAXTEMP 280
 #define ROASTTEMPFANSPEED 0.8
-#define USEPID 1
+#define USEPID 0
 
 #define ROASTMANUAL 0
 #define ROASTPROFILE 1
@@ -225,6 +225,7 @@ void doRoast()
 
   analogReference(DEFAULT);
   double potreading = 0.0;
+  tempreading = 0.0;
   for(int i=0; i<5; i++)
   {
     // Thermo reading
