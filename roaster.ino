@@ -7,7 +7,7 @@
 /* Wiring
                   attiny85
                     +----+
-(a0/rst/pot/pgm-cs))-|1  8|-(vcc)
+(a0/rst/pot/pgm-cs)-|1  8|-(vcc)
   (heater relay/d3)-|2  7|-(d2/therm cs+lcd data/en/pgm-clk)
        (fan pwm/d4)-|3  6|-(d1/serial tx/therm+sr clocks/pgm-miso)
               (gnd)-|4  5|-(d0/therm do/pgm-mosi)
