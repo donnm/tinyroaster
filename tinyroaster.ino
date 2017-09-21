@@ -1,4 +1,5 @@
-#include <PID_v1.h>
+#include <avr/pgmspace.h>
+//#include <PID_v1.h>
 #include <SendOnlySoftwareSerial.h>
 #include <max6675.h>
 #include <LiquidCrystal_SR2W.h>
@@ -24,8 +25,11 @@
 
 TODO:
 d bug - random attiny reset during roast
+- bug - getRelativeInput countdown strangeness
+- bug - linearise pot readings
 - feature - integrate PID control
-- feature - option to save profile when roast complete
+- feature - option to save profile when roast complete'
+- bug - fan starts again when temp jumps above stop threshold
 */
 
 #define RXPIN 0
@@ -42,77 +46,115 @@ d bug - random attiny reset during roast
 #define POTMAX 956
 #define MINFANHEAT 4
 #define POTSENSITIVITY 5
-#define BANNERMS 2000
+#define BANNERMS 1000
 #define LCD_ROWS 2
 #define LCD_COLS 20
 #define MAXTEMP 280
-#define ROASTTEMPFANSPEED 0.8
+//#define ROASTTEMPFANSPEED 0.8
 #define USEPID 0
 
 #define ROASTMANUAL 0
-#define ROASTPROFILE 1
-#define ROASTTEMP 2
+#define ROASTTEMP 1
+#define ROASTPROFILE 2
 
 bool started = false;
 unsigned long curr_time = 0;
-unsigned long menu_time = 0;
+unsigned long stopped_time = 0;
+unsigned long startup_time = 0;
 short stage = 0;
-double pidout = 0.0; // pid output
 double target_temp = 0.0; // pid setpoint
-double tempreading = 0.0; // pid input
+//double tempreading = 0.0; // pid input
+#if USEPID
+double pidout = 0.0;     // pid output
 int WindowSize = 5000;
 unsigned long windowStartTime;
+#endif
 double lastpot;
 byte roastmode = ROASTMANUAL;
 byte roastprofile = 0;
-short *stages_secs;
+double roast_temp_fan_speed = 0.8;
+//short *stages_secs;
 short *stages_temp;
 
+/* String table
+ *  Use PROGMEM to store in flash
+ */
+const char str_you_chose[] PROGMEM = "You chose ";
+
+const char profile_light[] PROGMEM = "Light";
+const char profile_city[] PROGMEM = "City";
+const char profile_cityp[] PROGMEM = "City+";
+const char profile_vienna[] PROGMEM = "Vienna";
+const char profile_french[] PROGMEM = "French";
+
+const char mode_manual[] PROGMEM = "Manual";
+const char mode_temp[] PROGMEM = "Temperature";
+const char mode_profile[] PROGMEM = "Profile";
+
+const char fanspeed_70[] PROGMEM = "70%";
+const char fanspeed_80[] PROGMEM = "80%";
+const char fanspeed_90[] PROGMEM = "90%";
+const char fanspeed_100[] PROGMEM = "100%";
+
+const char* const profile_choices[] PROGMEM = {profile_light, profile_city, profile_cityp, profile_vienna, profile_french};
+const char* const mode_choices[] PROGMEM = {mode_manual, mode_temp, mode_profile};
+const char* const fanspeed_choices[] PROGMEM = {fanspeed_70,fanspeed_80,fanspeed_90,fanspeed_100};
+
+#if USEPID
 PID pid(&tempreading, &pidout, &target_temp,2,5,1, DIRECT);
+#endif
 LiquidCrystal_SR2W lcd(SRDATAEN,SRCLK, NEGATIVE);
 MAX6675 thermocouple(THERMCLK, THERMCS, THERMDO);
 //SendOnlySoftwareSerial Serial(TXPIN); //tx
 
-
 void mainMenu();
 void profileMenu();
+void tempMenu();
 void doRoast();
 bool loadProfile();
 bool saveProfile();
-int getRelativeInput(const __FlashStringHelper* prompt, double timeoutms, bool wrap, bool allownone, int numchoices, const char* choices);
+int getRelativeInput(const char* prompt, double timeoutms, bool wrap, bool allownone, int numchoices, const char** choices);
 
-struct profile {
-    char name[20];
-    int seconds[20];
-    int temps[20];
-};
+/* Roast profiles
+ *  Since these are all 10 minute profiles, and the timings are the same, only
+ *  use one array for timings (stage_secs). May adjust later as needed. Saves RAM.
+ *  
+ *  Number of stages calculated based on the number of non-zero entries in
+ *  *_stages_temp. 0-terminated integer array.
+ */
+short stages_secs[]           = {0,   160, 220, 280, 340, 400, 460, 520, 640};
+//short stages_secs[]           = {0,   4, 8, 10, 15, 17, 19, 21, 25};
+//short light_stages_secs[]     = {0,   160, 220, 280, 340, 400, 460, 520, 640};
+short light_stages_temp[]     = {200, 204, 208, 210, 212, 215,   0,   0,   0};
 
-#define NUM_STAGES 9
-short city_stages_secs[] = {0,   160, 220, 280, 340, 400, 460, 520, 640};
-short city_stages_temp[] = {200, 208, 212, 216, 220, 225, 230, 235, 0  };
+//short city_stages_secs[]      = {0,   160, 220, 280, 340, 400, 460, 520, 640};
+short city_stages_temp[]      = {200, 208, 212, 216, 220, 225,   0,   0,   0};
 
-short citypluss_stages_secs[] = {0,   160, 220, 280, 340, 400, 460, 520, 640};
-short citypluss_stages_temp[] = {200, 210, 215, 220, 225, 230, 240, 245, 0  };
+//short citypluss_stages_secs[] = {0,   160, 220, 280, 340, 400, 460, 520, 640};
+short citypluss_stages_temp[] = {200, 210, 215, 220, 225, 230,   0,   0,   0};
 
-short vienna_stages_secs[] = {0,   160, 220, 280, 340, 400, 460, 520, 640};
-short vienna_stages_temp[] = {200, 210, 215, 225, 230, 245, 255, 260, 0  };
+//short vienna_stages_secs[]    = {0,   160, 220, 280, 340, 400, 460, 520, 640};
+short vienna_stages_temp[]    = {200, 210, 215, 220, 225, 230, 235, 240,   0};
 
-/* Light roast not full first crack
-short stages_secs[] = {0,   160, 220, 280, 340, 400, 460, 520, 640};
-short stages_temp[] = {200, 204, 208, 212, 216, 220, 224, 230, 0  };
-*/
+//short french_stages_secs[]    = {0,   160, 220, 280, 340, 400, 460, 520, 640};
+short french_stages_temp[]    = {200, 210, 215, 220, 225, 230, 235, 245,   0};
 
 void setup()
 {
   pinMode(HEATERPIN, OUTPUT);
   digitalWrite(HEATERPIN, LOW);
-  
+
   lcd.begin(LCD_COLS,LCD_ROWS);
   lcd.clear();
-  lcd.setCursor(4,0);
+  lcd.setCursor(20,0);
   lcd.print(F("*Donnypants*"));
-  lcd.setCursor(4,1);
+  lcd.setCursor(20,1);
   lcd.print(F("* Roaster  *"));
+  for (int i=0; i<16; i++)
+  {
+    lcd.scrollDisplayLeft();
+    delay(75);
+  }
   delay(BANNERMS);
 
   lastpot = analogRead(POTPIN);
@@ -127,10 +169,13 @@ void setup()
     delay(250);
     lastpot = analogRead(POTPIN);
   }
-  delay(2000);
 
+  delay(500);
+
+#if USEPID
   pid.SetOutputLimits(0, WindowSize);
   pid.SetMode(AUTOMATIC);
+#endif
 }
 
 void loop()
@@ -145,38 +190,46 @@ void loop()
       profileMenu();
       lcd.clear();
     }
+    else if(roastmode == ROASTTEMP)
+    {
+      tempMenu();
+      lcd.clear();
+    }
 
     started = true;
-    menu_time = millis();
+    startup_time = millis();
   }
-  
+
+#if USEPID
   windowStartTime = millis();
-  doRoast();
+#endif
+  while(true) doRoast();
 }
 
 void mainMenu()
 {
-  int pos = getRelativeInput(F("Man, Temp, Profile: "),
+  int pos = getRelativeInput(PSTR("Select mode: "),
     10000,
     false,
     false,
     3,
-    " m  t  p ");
+    mode_choices);
   lcd.clear();
   lcd.setCursor(0,0);
-  lcd.print(F("You chose "));
+  char buff[LCD_COLS+1];
+  strcpy_P(buff, str_you_chose);
+  lcd.print(buff);
+  strcpy_P(buff, (char*)pgm_read_word(&(mode_choices[pos-1])));
+  lcd.print(buff);
   switch(pos)
   {
     case 1:
-      lcd.print(F("manual"));
       roastmode = ROASTMANUAL;
       break;
     case 2:
-      lcd.print(F("temp"));
       roastmode = ROASTTEMP;
       break;
     case 3:
-      lcd.print(F("profile"));
       roastmode = ROASTPROFILE;
       break;
   }
@@ -185,235 +238,248 @@ void mainMenu()
 
 void profileMenu()
 {
-  int pos = getRelativeInput(F("City, City+, Vienna: "),
+  int pos = getRelativeInput(PSTR("Select profile: "),
     10000,
     false,
     false,
-    3,
-    " c  +  v ");
+    5,
+    profile_choices);
   lcd.clear();
   lcd.setCursor(0,0);
-  lcd.print(F("You chose "));
+  char buff[LCD_COLS+1];
+  strcpy_P(buff, str_you_chose);
+  lcd.print(buff);
+  strcpy_P(buff, (char*)pgm_read_word(&(profile_choices[pos-1])));
+  roastprofile = pos-1;
+  lcd.print(buff);
   switch(pos)
   {
     case 1:
-      lcd.print(F("city"));
-      stages_secs = city_stages_secs;
-      stages_temp = city_stages_temp;
+      stages_temp = light_stages_temp;
       break;
     case 2:
-      lcd.print(F("city+"));
-      stages_secs = citypluss_stages_secs;
-      stages_temp = citypluss_stages_temp;
+      stages_temp = city_stages_temp;
       break;
     case 3:
-      lcd.print(F("vienna"));
-      stages_secs = vienna_stages_secs;
+      stages_temp = citypluss_stages_temp;
+      break;
+    case 4:
       stages_temp = vienna_stages_temp;
+      break;
+    case 5:
+      stages_temp = french_stages_temp;
       break;
   }
   roastprofile = pos-1;
   delay(1000);
 }
 
-void doRoast()
+void tempMenu()
 {
-  curr_time = (millis()-menu_time)/1000;
-  
-  // Clear the SR to fix LCD issue due to sharing of data/en + cs pins
-  shiftOut(SRDATAEN, SRCLK, 0, MSBFIRST);
-
-  analogReference(DEFAULT);
-  double potreading = 0.0;
-  tempreading = 0.0;
-  for(int i=0; i<5; i++)
-  {
-    // Thermo reading
-    digitalWrite(THERMCS,HIGH);
-    delay(5);
-    tempreading += thermocouple.readCelsius();
-    digitalWrite(THERMCS, LOW);
-    delay(5);
-
-    // Pot reading
-    potreading += analogRead(POTPIN);
-    delay(10);
-  }
-  potreading /= 5;
-  tempreading /= 5;
-
-  // PID calculation based on current temperature
-  pid.Compute();
-
-  float val = (float)(potreading-POTMIN)/(float)(POTMAX-POTMIN);
-  if(val < 0 || curr_time < 1.0) val = 0;
-  if(val > 1.0) val = 1.0;
-
-  if(roastmode == ROASTPROFILE)
-  {
-    // Which stage are we at?
-    for(int i=0; i<NUM_STAGES-1; i++)
-    {
-      unsigned int mint = stages_secs[i];
-      unsigned int maxt = stages_secs[i+1];
-      if (curr_time > mint && curr_time < maxt)
-        stage = i;
-      else if(curr_time >= maxt)
-        stage = i+1;
-      target_temp = stages_temp[stage];
-    }
-  
-    if(stage >= NUM_STAGES-1)
-    {
-      // Turn off the heater
-      digitalWrite(HEATERPIN, LOW);
-      
-      // Coool off beans?
-//      analogWrite(PWMPIN, 255);
-    }
-    else
-    {
-      // Heater control
-#if USEPID
-      unsigned long now = millis();
-      if(now - windowStartTime>WindowSize)
-      {
-        windowStartTime += WindowSize;
-      }
-      if(pidout > now - windowStartTime)
-#else
-      if(tempreading < target_temp)
-#endif
-      {
-        digitalWrite(HEATERPIN, HIGH);
-        lcd.setCursor(0,0);
-        lcd.print(F("H"));
-      }
-      else
-      {
-        digitalWrite(HEATERPIN, LOW);
-        lcd.setCursor(0,0);
-        lcd.print(F("h"));
-      }
-    }
-  }
-  else if (roastmode == ROASTMANUAL)
-  {
-    if(val*9 < MINFANHEAT)
-    {
-      digitalWrite(HEATERPIN, LOW);
-  //    lcd.setCursor(0,0);
-  //    lcd.print("h");
-  //    info = "Low fan, heat off";
-    }
-    else
-    {
-      digitalWrite(HEATERPIN, HIGH);
-    }
-  }
-  else if (roastmode == ROASTTEMP)
-  {
-    analogWrite(PWMPIN, ROASTTEMPFANSPEED*255);
-    target_temp = val*MAXTEMP;
-    // Heater control
-#if USEPID
-      unsigned long now = millis();
-      if(now - windowStartTime>WindowSize)
-      {
-        windowStartTime += WindowSize;
-      }
-      if(pidout > now - windowStartTime)
-#else
-      if(tempreading < target_temp)
-#endif
-    {
-      digitalWrite(HEATERPIN, HIGH);
-      lcd.setCursor(0,0);
-      lcd.print(F("H"));
-    }
-    else
-    {
-      digitalWrite(HEATERPIN, LOW);
-      lcd.setCursor(0,0);
-      lcd.print(F("h"));
-    }
-  }
-
-  // Status
-  lcd.begin(LCD_COLS,LCD_ROWS); // display bug possibly due to RFI
+  int pos = getRelativeInput(PSTR("Select fan speed: "),
+    10000,
+    false,
+    false,
+    4,
+    fanspeed_choices);
   lcd.clear();
   lcd.setCursor(0,0);
-  lcd.print(F("         "));
-  lcd.setCursor(3,0);
-  lcd.print(tempreading,1);
-  if(roastmode != ROASTMANUAL)
+  char buff[LCD_COLS+1];
+  strcpy_P(buff, str_you_chose);
+  lcd.print(buff);
+  strcpy_P(buff, (char*)pgm_read_word(&(fanspeed_choices[pos-1])));
+  lcd.print(buff);
+  switch(pos)
   {
-    lcd.print(F("->"));
-    lcd.print(target_temp);
+    case 1:
+      roast_temp_fan_speed = 0.7;
+      break;
+    case 2:
+      roast_temp_fan_speed = 0.8;
+      break;
+    case 3:
+      roast_temp_fan_speed = 0.9;
+      break;
+    case 4:
+      roast_temp_fan_speed = 1;
+      break;
   }
-  lcd.print(F("C"));
-  lcd.setCursor(3,1);
-  lcd.print(F("         "));
-  lcd.setCursor(3,1);
-  lcd.print(curr_time,1);
-  lcd.print(F(" s "));
-  if(roastmode == ROASTPROFILE)
-  {
-    lcd.print(stage);
-  }
-
-  if(roastmode == ROASTTEMP)
-  {
-    lcd.setCursor(0,1);
-    lcd.print((int)(ROASTTEMPFANSPEED*9));
-    lcd.print(F("  "));
-  }
-  else
-  {
-    // Fan control
-    analogWrite(PWMPIN, val*255);
-    // Show fan speed
-    lcd.setCursor(0,1);
-    lcd.print((int)(val*9));
-    lcd.print(F("  "));
-  }
-
-  // Set thermocouple CS high after LCD activity just in case
-  digitalWrite(THERMCS, HIGH);
-
-  delay(250);
+  delay(1000);
 }
 
-/* getRelativeInput presents a prompt and lets user scroll through menu using
- * only the pot with a timer counting down to choose the selected item.
- * 
- *  choices a string of format " a  b  c "
- *  numchoices in this case would be 3
- *  prompt should not be longer than 20 characters, null terminated
- */
-int getRelativeInput(const __FlashStringHelper* prompt, double timeoutms, bool wrap, bool allownone, int numchoices, const char* choices)
+void doRoast()
+{
+  // heat (true/false), fanpwm (0-255)
+  // These are set in the loop body and only acted on
+  // at the end of the routine.
+  bool heat = false;
+  double fanpwm = 0;
+  int num_stages = 0;
+  char lcdbuff[LCD_COLS];
+  double potreading = 0.0;
+  double tempreading = 0.0;
+
+  curr_time = (millis()-startup_time)/1000.0;
+  /* stopped_time: save the time we finished so we can display it 
+   * statically while keeping time timer going so we can flash between
+   * roastmode and roastprofile for nicer UI
+   */
+  if(started)
+    stopped_time = curr_time;
+  
+  // Thermo reading
+  digitalWrite(THERMCS,HIGH);
+  delay(1);
+  tempreading = thermocouple.readCelsius();
+  digitalWrite(THERMCS, LOW);
+
+  // Pot reading
+  potreading += analogRead(POTPIN);
+  float val = (float)(potreading-POTMIN)/(float)(POTMAX-POTMIN);
+  if(val < 0) val = 0; // || curr_time < 1.0
+  if(val > 1.0) val = 1.0;
+
+  // Mode-specific heat and fan control
+  switch(roastmode)
+  {
+    case ROASTPROFILE:
+      // Calculate number of stages if profile
+      while(stages_temp[num_stages] != 0)
+        num_stages++;
+      // Include trailing zero
+      num_stages++;
+    
+      // Which stage are we at?
+      stage = 0;
+      while(stage < num_stages && curr_time >= stages_secs[stage])
+        stage++;
+      target_temp = stages_temp[stage-1];
+
+      // Heater control
+      if(tempreading < target_temp + 2)
+        heat = true;
+      // Fan control
+      fanpwm = val*255;
+
+      // Turn off fan if heat is off AND we're at last stage AND temp less than 50
+      if(stage == num_stages && heat == false && tempreading < 50)
+      {
+        fanpwm = 0;
+        started = false;
+      }
+      break;
+    case ROASTMANUAL:
+      // Heater control
+      if(val*9 >= MINFANHEAT)
+        heat = true;
+      // Fan control
+      fanpwm = val*255;
+      break;
+    case ROASTTEMP:
+      target_temp = val*MAXTEMP;
+      // Heater control
+      if(tempreading < target_temp + 2)
+        heat = true;
+      // Fan control
+      fanpwm = roast_temp_fan_speed*255;
+      break;
+  }
+
+  // Re-init LCD (avoids garbage chars due to shared pins with thermocouple)
+  lcd.begin(LCD_COLS,LCD_ROWS);
+  lcd.clear();
+
+  // Display heat/fan status
+  lcd.setCursor(0,0);
+  lcd.print(heat?"H":"h");
+  lcd.setCursor(0,1);
+  lcd.print((int)((fanpwm/255)*9));
+
+  // Display roast mode (and profile)
+  lcd.setCursor(2,0);
+  strcpy_P(lcdbuff, (char*)pgm_read_word(&(mode_choices[roastmode])));
+  if(roastmode == ROASTPROFILE)
+    if(curr_time % 4 == 0) // Alternate Mode + profile
+      strcpy_P(lcdbuff, (char*)pgm_read_word(&(profile_choices[roastprofile])));
+  // Truncate the string
+  if(strlen(lcdbuff) > 8)
+  {
+    lcdbuff[7] = '.';
+    lcdbuff[8] = '\0';
+  }
+  lcd.print(lcdbuff);
+
+  // Display temperature and target
+  lcd.setCursor(10,0);
+  lcd.print((int)tempreading,1);
+  lcd.print("C");
+  if(roastmode != ROASTMANUAL)
+  {
+    lcd.setCursor(14,0);
+    lcd.print(" (");
+    lcd.print((int)target_temp,1);
+    lcd.print(")");
+  }
+
+  // Display profile stage
+  if(roastmode == ROASTPROFILE)
+  {
+    lcd.setCursor(2,1);
+    if(!started)
+    {
+      lcd.print(F("Done!"));
+    }
+    else
+    {
+      lcd.print(F("Stage "));
+      lcd.print(stage);
+      lcd.print(F("/"));
+      lcd.print(num_stages);
+    }
+  }
+
+  // Display current time
+  lcd.setCursor(15,1);
+  lcd.print(stopped_time);
+  lcd.print(" s");
+  
+  // Heat and fan control
+  digitalWrite(HEATERPIN, heat?HIGH:LOW);
+  analogWrite(PWMPIN, fanpwm);
+
+  // Set thermocouple CS high after LCD activity (required!)
+  digitalWrite(THERMCS,HIGH);
+
+  // Long delay to make LCD more readable (less blinking)
+  delay(250);
+
+  // This required for stable LCD
+  lcd.clear();
+}
+
+int getRelativeInput(const char* prompt, double timeoutms, bool wrap, bool allownone, int numchoices, const char** choices)
 {
   int res = 0;
   double remainingms = timeoutms;
   double selectedms = 0;
   lastpot = analogRead(A0);
-  char buff[21];
+  char buff[LCD_COLS+1];
 
   while(remainingms > 0)
   {
-    strcpy(buff, choices);
-    if(res >= 0)
-    {
-      buff[(res-1)*(numchoices)] = '(';
-      buff[(res-1)*(numchoices)+2] = ')';
-    }
     lcd.clear();
     lcd.setCursor(0,0);
-    lcd.print(prompt);
+    strncpy_P(buff, prompt, LCD_COLS);
+    lcd.print(buff);
+    if(res > 0)
+      strcpy_P(buff, (char*)pgm_read_word(&(choices[res-1])));
+    else
+      buff[0] = '\0';
     lcd.setCursor(0,1);
     lcd.print(buff);
-    lcd.print(" ");
-    lcd.print((int)(remainingms/1000));
+    lcd.print(F(" "));
+    lcd.setCursor(18,1);
+    lcd.print((int)(remainingms/1000.0));
     
     double pot = analogRead(A0);
 
@@ -463,3 +529,4 @@ int getRelativeInput(const __FlashStringHelper* prompt, double timeoutms, bool w
 
   return res;
 }
+
