@@ -24,12 +24,11 @@
 
 
 TODO:
-d bug - random attiny reset during roast
 - bug - getRelativeInput countdown strangeness
 - bug - linearise pot readings
 - feature - integrate PID control
-- feature - option to save profile when roast complete'
-- bug - fan starts again when temp jumps above stop threshold
+- feature - option to save profile when roast complete
+- feature - median filter for temperature
 */
 
 #define RXPIN 0
@@ -62,6 +61,7 @@ unsigned long curr_time = 0;
 unsigned long stopped_time = 0;
 unsigned long startup_time = 0;
 short stage = 0;
+short num_stages = 0;
 double target_temp = 0.0; // pid setpoint
 //double tempreading = 0.0; // pid input
 #if USEPID
@@ -81,23 +81,23 @@ short *stages_temp;
  */
 const char str_you_chose[] PROGMEM = "You chose ";
 
-const char profile_light[] PROGMEM = "Light";
-const char profile_city[] PROGMEM = "City";
-const char profile_cityp[] PROGMEM = "City+";
+const char profile_light[]  PROGMEM = "Light";
+const char profile_city[]   PROGMEM = "City";
+const char profile_cityp[]  PROGMEM = "City+";
 const char profile_vienna[] PROGMEM = "Vienna";
 const char profile_french[] PROGMEM = "French";
 
-const char mode_manual[] PROGMEM = "Manual";
-const char mode_temp[] PROGMEM = "Temperature";
+const char mode_manual[]  PROGMEM = "Manual";
+const char mode_temp[]    PROGMEM = "Temperature";
 const char mode_profile[] PROGMEM = "Profile";
 
-const char fanspeed_70[] PROGMEM = "70%";
-const char fanspeed_80[] PROGMEM = "80%";
-const char fanspeed_90[] PROGMEM = "90%";
+const char fanspeed_70[]  PROGMEM = "70%";
+const char fanspeed_80[]  PROGMEM = "80%";
+const char fanspeed_90[]  PROGMEM = "90%";
 const char fanspeed_100[] PROGMEM = "100%";
 
-const char* const profile_choices[] PROGMEM = {profile_light, profile_city, profile_cityp, profile_vienna, profile_french};
-const char* const mode_choices[] PROGMEM = {mode_manual, mode_temp, mode_profile};
+const char* const profile_choices[]  PROGMEM = {profile_light, profile_city, profile_cityp, profile_vienna, profile_french};
+const char* const mode_choices[]     PROGMEM = {mode_manual, mode_temp, mode_profile};
 const char* const fanspeed_choices[] PROGMEM = {fanspeed_70,fanspeed_80,fanspeed_90,fanspeed_100};
 
 #if USEPID
@@ -125,19 +125,19 @@ int getRelativeInput(const char* prompt, double timeoutms, bool wrap, bool allow
 short stages_secs[]           = {0,   160, 220, 280, 340, 400, 460, 520, 640};
 //short stages_secs[]           = {0,   4, 8, 10, 15, 17, 19, 21, 25};
 //short light_stages_secs[]     = {0,   160, 220, 280, 340, 400, 460, 520, 640};
-short light_stages_temp[]     = {200, 204, 208, 210, 212, 215,   0,   0,   0};
+short light_stages_temp[]     = {200, 204, 205, 206, 208, 0,   0,   0,   0};
 
 //short city_stages_secs[]      = {0,   160, 220, 280, 340, 400, 460, 520, 640};
-short city_stages_temp[]      = {200, 208, 212, 216, 220, 225,   0,   0,   0};
+short city_stages_temp[]      = {200, 208, 212, 216, 220, 0,   0,   0,   0};
 
 //short citypluss_stages_secs[] = {0,   160, 220, 280, 340, 400, 460, 520, 640};
 short citypluss_stages_temp[] = {200, 210, 215, 220, 225, 230,   0,   0,   0};
 
 //short vienna_stages_secs[]    = {0,   160, 220, 280, 340, 400, 460, 520, 640};
-short vienna_stages_temp[]    = {200, 210, 215, 220, 225, 230, 235, 240,   0};
+short vienna_stages_temp[]      = {200, 210, 215, 220, 227, 235, 240, 0,   0};
 
 //short french_stages_secs[]    = {0,   160, 220, 280, 340, 400, 460, 520, 640};
-short french_stages_temp[]    = {200, 210, 215, 220, 225, 230, 235, 245,   0};
+short french_stages_temp[]      = {200, 210, 215, 220, 225, 230, 235, 240,   0};
 
 void setup()
 {
@@ -314,7 +314,6 @@ void doRoast()
   // at the end of the routine.
   bool heat = false;
   double fanpwm = 0;
-  int num_stages = 0;
   char lcdbuff[LCD_COLS];
   double potreading = 0.0;
   double tempreading = 0.0;
@@ -326,10 +325,11 @@ void doRoast()
    */
   if(started)
     stopped_time = curr_time;
-  
+
+  // Take median temperature?
   // Thermo reading
   digitalWrite(THERMCS,HIGH);
-  delay(1);
+  delay(5);
   tempreading = thermocouple.readCelsius();
   digitalWrite(THERMCS, LOW);
 
@@ -340,10 +340,12 @@ void doRoast()
   if(val > 1.0) val = 1.0;
 
   // Mode-specific heat and fan control
+  if(started)
   switch(roastmode)
   {
     case ROASTPROFILE:
       // Calculate number of stages if profile
+      num_stages = 0;
       while(stages_temp[num_stages] != 0)
         num_stages++;
       // Include trailing zero
@@ -356,7 +358,7 @@ void doRoast()
       target_temp = stages_temp[stage-1];
 
       // Heater control
-      if(tempreading < target_temp + 2)
+      if(tempreading < target_temp + 2 && tempreading != 0) // zero temp reading can mean short in probe
         heat = true;
       // Fan control
       fanpwm = val*255;
@@ -378,7 +380,7 @@ void doRoast()
     case ROASTTEMP:
       target_temp = val*MAXTEMP;
       // Heater control
-      if(tempreading < target_temp + 2)
+      if(tempreading < target_temp + 2 && tempreading != 0) // zero temp reading can mean short in probe
         heat = true;
       // Fan control
       fanpwm = roast_temp_fan_speed*255;
