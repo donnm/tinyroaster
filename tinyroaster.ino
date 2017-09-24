@@ -57,9 +57,11 @@ TODO:
 #define ROASTPROFILE 2
 
 bool started = false;
+bool emergency = false;
 unsigned long curr_time = 0;
 unsigned long stopped_time = 0;
 unsigned long startup_time = 0;
+short numzeros = 0; // Error tracking for temp sensor
 short stage = 0;
 short num_stages = 0;
 double target_temp = 0.0; // pid setpoint
@@ -144,20 +146,45 @@ void setup()
   pinMode(HEATERPIN, OUTPUT);
   digitalWrite(HEATERPIN, LOW);
 
-  lcd.begin(LCD_COLS,LCD_ROWS);
-  lcd.clear();
-  lcd.setCursor(20,0);
-  lcd.print(F("*Donnypants*"));
-  lcd.setCursor(20,1);
-  lcd.print(F("* Roaster  *"));
-  for (int i=0; i<16; i++)
-  {
-    lcd.scrollDisplayLeft();
-    delay(75);
-  }
-  delay(BANNERMS);
-
+  // Emergency fan mode
   lastpot = analogRead(POTPIN);
+  if(lastpot >= POTMAX - 10)
+  {
+    roastmode = ROASTMANUAL;
+    started = true;
+    emergency = true;
+    doRoast();
+
+    lcd.begin(LCD_COLS,LCD_ROWS);
+    lcd.clear();
+    lcd.setCursor(20,0);
+    lcd.print(F("*Emergency *"));
+    lcd.setCursor(20,1);
+    lcd.print(F("*   Mode   *"));
+    for (int i=0; i<16; i++)
+    {
+      lcd.scrollDisplayLeft();
+      delay(75);
+    }
+    delay(BANNERMS);
+  }
+  else
+  {
+    lcd.begin(LCD_COLS,LCD_ROWS);
+    lcd.clear();
+    lcd.setCursor(20,0);
+    lcd.print(F("*Donnypants*"));
+    lcd.setCursor(20,1);
+    lcd.print(F("* Roaster  *"));
+    for (int i=0; i<16; i++)
+    {
+      lcd.scrollDisplayLeft();
+      delay(75);
+    }
+    delay(BANNERMS);
+  }
+
+  /*
   while(lastpot <= POTMIN + 10 || lastpot >= POTMAX - 10)
   {
     lcd.clear();
@@ -169,6 +196,8 @@ void setup()
     delay(250);
     lastpot = analogRead(POTPIN);
   }
+  */
+
 
   delay(500);
 
@@ -326,13 +355,48 @@ void doRoast()
   if(started)
     stopped_time = curr_time;
 
-  // Take median temperature?
-  // Thermo reading
-  digitalWrite(THERMCS,HIGH);
-  delay(5);
-  tempreading = thermocouple.readCelsius();
-  digitalWrite(THERMCS, LOW);
+/*
+  while(tempreading == 0.0)
+  {
+    // Thermo reading
+    digitalWrite(THERMCS,HIGH);
+    delay(5);
+    tempreading = thermocouple.readCelsius();
+    digitalWrite(THERMCS, LOW);
+    delay(5);
+  }
+  */
 
+  // Multiple temperature readings to reduce noise
+  int temps[10];
+  for(int i=0; i<10; i++)
+  {
+    // Thermo reading
+    digitalWrite(THERMCS,HIGH);
+    delay(5);
+    temps[i] = thermocouple.readCelsius();
+    digitalWrite(THERMCS, LOW);
+    delay(5);
+  }
+  // Insertion sort on the array of readings
+  for(int i=0; i<10; i++)
+  {
+    int j = i, t;
+    while (j > 0 && temps[j] < temps[j-1])
+    {
+        t = temps[j];
+        temps[j] = temps[j-1];
+        temps[j-1] = t;
+        j--;
+    }
+  }
+  // Take median temperature
+  tempreading = temps[7];
+
+  // Record failed readings
+  if(tempreading == 0.0)
+    numzeros++;
+  
   // Pot reading
   potreading += analogRead(POTPIN);
   float val = (float)(potreading-POTMIN)/(float)(POTMAX-POTMIN);
@@ -364,7 +428,7 @@ void doRoast()
       fanpwm = val*255;
 
       // Turn off fan if heat is off AND we're at last stage AND temp less than 50
-      if(stage == num_stages && heat == false && tempreading < 50)
+      if(stage == num_stages && heat == false && tempreading < 50 && tempreading != 0.0)
       {
         fanpwm = 0;
         started = false;
@@ -372,7 +436,7 @@ void doRoast()
       break;
     case ROASTMANUAL:
       // Heater control
-      if(val*9 >= MINFANHEAT)
+      if(val*9 >= MINFANHEAT && !emergency)
         heat = true;
       // Fan control
       fanpwm = val*255;
@@ -429,7 +493,14 @@ void doRoast()
     lcd.setCursor(2,1);
     if(!started)
     {
-      lcd.print(F("Done!"));
+      // Show status of zero temperature reads
+      if(curr_time % 4 == 0)
+      {
+        lcd.print(F("# 0C: "));
+        lcd.print(numzeros);
+      }
+      else
+        lcd.print(F("Done!"));
     }
     else
     {
@@ -438,6 +509,16 @@ void doRoast()
       lcd.print(F("/"));
       lcd.print(num_stages);
     }
+  }
+
+  // If necessary, show we're in emergency cool-down mode
+  if(roastmode == ROASTMANUAL && emergency)
+  {
+    lcd.setCursor(2,1);
+    if(curr_time % 4 == 0)
+      lcd.print(F("Heater off"));
+    else
+      lcd.print(F("Emergency mode"));
   }
 
   // Display current time
