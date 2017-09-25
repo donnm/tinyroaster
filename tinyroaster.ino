@@ -1,9 +1,7 @@
 #include <avr/pgmspace.h>
-//#include <PID_v1.h>
 #include <SendOnlySoftwareSerial.h>
 #include <max6675.h>
 #include <LiquidCrystal_SR2W.h>
-#include <EEPROM.h>
 
 /* Wiring
                   attiny85
@@ -26,9 +24,7 @@
 TODO:
 - bug - getRelativeInput countdown strangeness
 - bug - linearise pot readings
-- feature - integrate PID control
 - feature - option to save profile when roast complete
-- feature - median filter for temperature
 */
 
 #define RXPIN 0
@@ -49,8 +45,6 @@ TODO:
 #define LCD_ROWS 2
 #define LCD_COLS 20
 #define MAXTEMP 280
-//#define ROASTTEMPFANSPEED 0.8
-#define USEPID 0
 
 #define ROASTMANUAL 0
 #define ROASTTEMP 1
@@ -64,13 +58,7 @@ unsigned long startup_time = 0;
 short numzeros = 0; // Error tracking for temp sensor
 short stage = 0;
 short num_stages = 0;
-double target_temp = 0.0; // pid setpoint
-//double tempreading = 0.0; // pid input
-#if USEPID
-double pidout = 0.0;     // pid output
-int WindowSize = 5000;
-unsigned long windowStartTime;
-#endif
+double target_temp = 0.0;
 double lastpot;
 byte roastmode = ROASTMANUAL;
 byte roastprofile = 0;
@@ -102,9 +90,6 @@ const char* const profile_choices[]  PROGMEM = {profile_light, profile_city, pro
 const char* const mode_choices[]     PROGMEM = {mode_manual, mode_temp, mode_profile};
 const char* const fanspeed_choices[] PROGMEM = {fanspeed_70,fanspeed_80,fanspeed_90,fanspeed_100};
 
-#if USEPID
-PID pid(&tempreading, &pidout, &target_temp,2,5,1, DIRECT);
-#endif
 LiquidCrystal_SR2W lcd(SRDATAEN,SRCLK, NEGATIVE);
 MAX6675 thermocouple(THERMCLK, THERMCS, THERMDO);
 //SendOnlySoftwareSerial Serial(TXPIN); //tx
@@ -146,7 +131,7 @@ void setup()
   pinMode(HEATERPIN, OUTPUT);
   digitalWrite(HEATERPIN, LOW);
 
-  // Emergency fan mode
+  // Emergency fan mode - heat off, cool down beans ASAP
   lastpot = analogRead(POTPIN);
   if(lastpot >= POTMAX - 10)
   {
@@ -154,57 +139,28 @@ void setup()
     started = true;
     emergency = true;
     doRoast();
+  }
 
-    lcd.begin(LCD_COLS,LCD_ROWS);
-    lcd.clear();
-    lcd.setCursor(20,0);
+  lcd.begin(LCD_COLS,LCD_ROWS);
+  lcd.clear();
+  lcd.setCursor(20,0);
+  if(emergency)
     lcd.print(F("*Emergency *"));
-    lcd.setCursor(20,1);
-    lcd.print(F("*   Mode   *"));
-    for (int i=0; i<16; i++)
-    {
-      lcd.scrollDisplayLeft();
-      delay(75);
-    }
-    delay(BANNERMS);
-  }
   else
-  {
-    lcd.begin(LCD_COLS,LCD_ROWS);
-    lcd.clear();
-    lcd.setCursor(20,0);
     lcd.print(F("*Donnypants*"));
-    lcd.setCursor(20,1);
+  lcd.setCursor(20,1);
+  if(emergency)
+    lcd.print(F("*   Mode   *"));
+  else
     lcd.print(F("* Roaster  *"));
-    for (int i=0; i<16; i++)
-    {
-      lcd.scrollDisplayLeft();
-      delay(75);
-    }
-    delay(BANNERMS);
-  }
-
-  /*
-  while(lastpot <= POTMIN + 10 || lastpot >= POTMAX - 10)
+  for (int i=0; i<16; i++)
   {
-    lcd.clear();
-    lcd.setCursor(0,0);
-    lcd.print(F("Dial at "));
-    lcd.print(lastpot);
-    lcd.setCursor(0,1);
-    lcd.print(F("Centre to begin"));
-    delay(250);
-    lastpot = analogRead(POTPIN);
+    lcd.scrollDisplayLeft();
+    delay(75);
   }
-  */
-
+  delay(BANNERMS);
 
   delay(500);
-
-#if USEPID
-  pid.SetOutputLimits(0, WindowSize);
-  pid.SetMode(AUTOMATIC);
-#endif
 }
 
 void loop()
@@ -214,24 +170,24 @@ void loop()
     mainMenu();
     lcd.clear();
   
-    if(roastmode == ROASTPROFILE)
+    switch(roastmode)
     {
-      profileMenu();
-      lcd.clear();
+      case ROASTPROFILE:
+        profileMenu();
+        break;
+      case ROASTTEMP:
+        tempMenu();
+        break;
+      case ROASTMANUAL:
+        break;
     }
-    else if(roastmode == ROASTTEMP)
-    {
-      tempMenu();
-      lcd.clear();
-    }
+
+    lcd.clear();
 
     started = true;
     startup_time = millis();
   }
 
-#if USEPID
-  windowStartTime = millis();
-#endif
   while(true) doRoast();
 }
 
@@ -354,18 +310,6 @@ void doRoast()
    */
   if(started)
     stopped_time = curr_time;
-
-/*
-  while(tempreading == 0.0)
-  {
-    // Thermo reading
-    digitalWrite(THERMCS,HIGH);
-    delay(5);
-    tempreading = thermocouple.readCelsius();
-    digitalWrite(THERMCS, LOW);
-    delay(5);
-  }
-  */
 
   // Multiple temperature readings to reduce noise
   int temps[10];
@@ -518,7 +462,7 @@ void doRoast()
     if(curr_time % 4 == 0)
       lcd.print(F("Heater off"));
     else
-      lcd.print(F("Emergency mode"));
+      lcd.print(F("Emerg. mode"));
   }
 
   // Display current time
@@ -550,19 +494,43 @@ int getRelativeInput(const char* prompt, double timeoutms, bool wrap, bool allow
 
   while(remainingms > 0)
   {
+    // Display menu prompt
     lcd.clear();
     lcd.setCursor(0,0);
     strncpy_P(buff, prompt, LCD_COLS);
     lcd.print(buff);
-    if(res > 0)
-      strcpy_P(buff, (char*)pgm_read_word(&(choices[res-1])));
-    else
-      buff[0] = '\0';
+
+    char *ptr = buff;
+    int cursorloc = 0;
+    int remaining = LCD_COLS - 3;
+    int startpos = res==0?0:res-1;
+    for(int i=startpos; i<numchoices && remaining > 0; i++)
+    {
+      int len = strlen_P((char*)pgm_read_word(&(choices[i])));
+      strncpy_P(ptr, (char*)pgm_read_word(&(choices[i])), remaining);
+      if(res - 1 == i)
+        cursorloc = ptr - buff;
+      if(i != numchoices -1)
+      {
+        strcat(ptr++, " ");
+        remaining--;
+      }
+      ptr += len;
+      remaining -= len;
+    }
+
     lcd.setCursor(0,1);
     lcd.print(buff);
-    lcd.print(F(" "));
+
     lcd.setCursor(18,1);
     lcd.print((int)(remainingms/1000.0));
+
+    if(res > 0)
+    {
+      // Highlight selected menu item
+      lcd.cursor();
+      lcd.setCursor(cursorloc,1);
+    }
     
     double pot = analogRead(A0);
 
@@ -610,6 +578,6 @@ int getRelativeInput(const char* prompt, double timeoutms, bool wrap, bool allow
     delay(100);
   }
 
+  lcd.noCursor();
   return res;
 }
-
