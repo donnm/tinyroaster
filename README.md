@@ -14,6 +14,9 @@ In Temperature mode, the user first chooses the fan speed (70, 80, 90 or 100% du
 
 In Profile mode, the user can choose from one of the pre-programmed profiles. Currently those are Light, City, City+, Vienna, French. The roast then begins and progresses until the end, at which point the beans are cooled to around 50C and the roast is stopped.
 
+### Emergency cool-down mode
+If a roast fails or stops prematurely, leaving the beans in the hot chamber can be dangerous. An emergency mode is therefor accessible by turning the pot all the way to the right and resetting the tinyroaster with the power switch (SW1). In this mode the fan is at 100% duty cycle and the heater is disabled, quickly cooling the chamber.
+
 ## Hot-air popper modifications
 
 In order to control the heater and fan independently, the fan must be decoupled from the heater. How you do this depends on the brand/model. There are lots of resources online already for how to do this, such as http://www.instructables.com/id/Build-a-Controllable-Coffee-Roaster-from-an-Air-Po/ and https://ineedcoffee.com/poplite-coffee-roaster/
@@ -33,7 +36,3 @@ A programmer header dangles out of the case so that I can connect a Bus Pirate a
 The ATtiny85 only has 5 I/O pins available, 6 if you can hold reset (pin 1) high enough while doing something useful with it. The 40k and 10k resistors do this, and allow us to read the potentiometer connected to this pin. This pot is the only user input, so it controls the fan speed, temperature, menu system, depending on what mode we're in.
 
 The LCD uses a 74HC164 shift register, which needs 2 pins (data, clock). The MAX6675 thermocouple IC needs three pins (/cs, clock, data). Heater relay one pin, fan PWM one pin. To get around the shortage I share pins between the shift register and MAX6675. This mostly works well, with some caveats. The LCD update code in the Arduino sketch needs a few hacks to make it run without corruption. I arrived at this mostly by trial and error. This could all be easily solved by using an Arduino compatible microcontroller with more I/O pins.
-
-### Emergency cool-down mode
-If a roast fails or stops prematurely, leaving the beans in the hot chamber can be dangerous. An emergency mode is therefor accessible by turning the pot all the way to the right and resetting the tinyroaster with the power switch (SW1). In this mode the fan is at 100% duty cycle and the heater is disabled, quickly cooling the chamber.
-
