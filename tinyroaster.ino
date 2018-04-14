@@ -1,6 +1,7 @@
 #include <avr/pgmspace.h>
 #include <SendOnlySoftwareSerial.h>
 #include <max6675.h>
+#include <EEPROM.h>
 #include <LiquidCrystal_SR2W.h>
 
 /* Wiring
@@ -24,7 +25,7 @@
 TODO:
 - bug - getRelativeInput countdown strangeness
 - bug - linearise pot readings
-- feature - option to save profile when roast complete
+- feature - PID control for heater
 */
 
 #define RXPIN 0
@@ -49,6 +50,9 @@ TODO:
 #define ROASTMANUAL 0
 #define ROASTTEMP 1
 #define ROASTPROFILE 2
+
+const int lastRoastValidAddr = 0;
+const int lastRoastProfileAddr = 1;
 
 bool started = false;
 bool emergency = false;
@@ -131,36 +135,76 @@ void setup()
   pinMode(HEATERPIN, OUTPUT);
   digitalWrite(HEATERPIN, LOW);
 
-  // Emergency fan mode - heat off, cool down beans ASAP
+  lcd.begin(LCD_COLS,LCD_ROWS);
+
+
+  // Special startup modes: {emergency: pot far right, last roast profile: pot far left}
   lastpot = analogRead(POTPIN);
+  int recallvalid = EEPROM.read(lastRoastValidAddr);
+  int recallprof = EEPROM.read(lastRoastProfileAddr);
   if(lastpot >= POTMAX - 10)
   {
+    // Emergency fan mode - heat off, cool down beans ASAP
     roastmode = ROASTMANUAL;
     started = true;
     emergency = true;
-    doRoast();
   }
-
-  lcd.begin(LCD_COLS,LCD_ROWS);
-  lcd.clear();
-  lcd.setCursor(20,0);
-  if(emergency)
-    lcd.print(F("*Emergency *"));
-  else
-    lcd.print(F("*Donnypants*"));
-  lcd.setCursor(20,1);
-  if(emergency)
-    lcd.print(F("*   Mode   *"));
-  else
-    lcd.print(F("* Roaster  *"));
-  for (int i=0; i<16; i++)
+  else if(lastpot <= (POTMIN + 10) && recallvalid && recallprof >= 0 && recallprof <= 4)
   {
-    lcd.scrollDisplayLeft();
-    delay(75);
+    // Select last saved roast mode (profile only)
+    roastmode = ROASTPROFILE;
+    roastprofile = recallprof;
+    switch(roastprofile+1)
+    {
+      case 1:
+        stages_temp = light_stages_temp;
+        break;
+      case 2:
+        stages_temp = city_stages_temp;
+        break;
+      case 3:
+        stages_temp = citypluss_stages_temp;
+        break;
+      case 4:
+        stages_temp = vienna_stages_temp;
+        break;
+      case 5:
+        stages_temp = french_stages_temp;
+        break;
+    }
+    started = true;
+    lcd.clear();
+    lcd.setCursor(0,0);
+    lcd.print(F("Recalling profile:"));
+    lcd.setCursor(0,1);
+    char buff[LCD_COLS+1];
+    strcpy_P(buff, (char*)pgm_read_word(&(profile_choices[roastprofile])));
+    lcd.print(buff);
+    delay(1000);
   }
-  delay(BANNERMS);
-
-  delay(500);
+  else
+  {
+    // Normal mode
+    lcd.clear();
+    lcd.setCursor(20,0);
+    if(emergency)
+      lcd.print(F("*Emergency *"));
+    else
+      lcd.print(F("*Donnypants*"));
+    lcd.setCursor(20,1);
+    if(emergency)
+      lcd.print(F("*   Mode   *"));
+    else
+      lcd.print(F("* Roaster  *"));
+    for (int i=0; i<16; i++)
+    {
+      lcd.scrollDisplayLeft();
+      delay(75);
+    }
+    delay(BANNERMS);
+  
+    delay(500);
+  }
 }
 
 void loop()
@@ -256,6 +300,8 @@ void profileMenu()
       break;
   }
   roastprofile = pos-1;
+  EEPROM.write(lastRoastValidAddr, true);
+  EEPROM.write(lastRoastProfileAddr, roastprofile);
   delay(1000);
 }
 
