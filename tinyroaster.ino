@@ -21,6 +21,9 @@
  (vcc)-|4  5|-(sck)
        +----+
 
+NOTES:
+- Seems to require this verison of attiny to build:
+  https://raw.githubusercontent.com/damellis/attiny/ide-1.6.x-boards-manager/package_damellis_attiny_index.json
 
 TODO:
 - bug - getRelativeInput countdown strangeness
