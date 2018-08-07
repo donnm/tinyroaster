@@ -116,19 +116,19 @@ int getRelativeInput(const char* prompt, double timeoutms, bool wrap, bool allow
 short stages_secs[]           = {0,   160, 220, 280, 340, 400, 460, 520, 640};
 //short stages_secs[]           = {0,   4, 8, 10, 15, 17, 19, 21, 25};
 //short light_stages_secs[]     = {0,   160, 220, 280, 340, 400, 460, 520, 640};
-short light_stages_temp[]     = {200, 204, 205, 206, 208, 0,   0,   0,   0};
+short light_stages_temp[]     = {185, 190, 195, 200, 205, 0,   0,   0,   0};
 
 //short city_stages_secs[]      = {0,   160, 220, 280, 340, 400, 460, 520, 640};
-short city_stages_temp[]      = {200, 208, 212, 216, 220, 0,   0,   0,   0};
+short city_stages_temp[]      = {200, 204, 205, 206, 208, 0,   0,   0,   0};
 
 //short citypluss_stages_secs[] = {0,   160, 220, 280, 340, 400, 460, 520, 640};
-short citypluss_stages_temp[] = {200, 210, 215, 220, 225, 230,   0,   0,   0};
+short citypluss_stages_temp[] = {200, 208, 212, 216, 220, 0,   0,   0,   0};
 
 //short vienna_stages_secs[]    = {0,   160, 220, 280, 340, 400, 460, 520, 640};
-short vienna_stages_temp[]      = {200, 210, 215, 220, 227, 235, 240, 0,   0};
+short vienna_stages_temp[]      = {200, 210, 215, 220, 225, 230,   0,   0,   0};
 
 //short french_stages_secs[]    = {0,   160, 220, 280, 340, 400, 460, 520, 640};
-short french_stages_temp[]      = {200, 210, 215, 220, 225, 230, 235, 240,   0};
+short french_stages_temp[]      = {200, 210, 215, 220, 227, 235, 240, 0,   0};
 
 void setup()
 {
@@ -190,7 +190,7 @@ void setup()
     if(emergency)
       lcd.print(F("*Emergency *"));
     else
-      lcd.print(F("*Donnypants*"));
+      lcd.print(F("*   Tiny   *"));
     lcd.setCursor(20,1);
     if(emergency)
       lcd.print(F("*   Mode   *"));
