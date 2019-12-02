@@ -99,7 +99,7 @@ const char* const fanspeed_choices[] PROGMEM = {fanspeed_70,fanspeed_80,fanspeed
 
 LiquidCrystal_SR2W lcd(SRDATAEN,SRCLK, NEGATIVE);
 MAX6675 thermocouple(THERMCLK, THERMCS, THERMDO);
-//SendOnlySoftwareSerial Serial(TXPIN); //tx
+SendOnlySoftwareSerial Serial(TXPIN); //tx
 
 void mainMenu();
 void profileMenu();
@@ -116,22 +116,13 @@ int getRelativeInput(const char* prompt, double timeoutms, bool wrap, bool allow
  *  Number of stages calculated based on the number of non-zero entries in
  *  *_stages_temp. 0-terminated integer array.
  */
-short stages_secs[]           = {0,   160, 220, 280, 340, 400, 460, 520, 640};
-//short stages_secs[]           = {0,   4, 8, 10, 15, 17, 19, 21, 25};
-//short light_stages_secs[]     = {0,   160, 220, 280, 340, 400, 460, 520, 640};
+short stages_secs[]           = {0,   160, 220, 280, 340, 380, 420, 480, 520};
+
 short light_stages_temp[]     = {185, 190, 195, 200, 205, 0,   0,   0,   0};
-
-//short city_stages_secs[]      = {0,   160, 220, 280, 340, 400, 460, 520, 640};
 short city_stages_temp[]      = {200, 204, 205, 206, 208, 0,   0,   0,   0};
-
-//short citypluss_stages_secs[] = {0,   160, 220, 280, 340, 400, 460, 520, 640};
-short citypluss_stages_temp[] = {200, 208, 212, 216, 220, 0,   0,   0,   0};
-
-//short vienna_stages_secs[]    = {0,   160, 220, 280, 340, 400, 460, 520, 640};
-short vienna_stages_temp[]      = {200, 210, 215, 220, 225, 230,   0,   0,   0};
-
-//short french_stages_secs[]    = {0,   160, 220, 280, 340, 400, 460, 520, 640};
-short french_stages_temp[]      = {200, 210, 215, 220, 227, 235, 240, 0,   0};
+short citypluss_stages_temp[] = {200, 208, 212, 216, 220, 225, 0,   0,   0};
+short vienna_stages_temp[]    = {200, 210, 215, 220, 225, 230, 235, 0,   0};
+short french_stages_temp[]    = {200, 210, 215, 220, 227, 235, 240, 245, 0};
 
 void setup()
 {
@@ -140,6 +131,8 @@ void setup()
 
   lcd.begin(LCD_COLS,LCD_ROWS);
 
+  Serial.begin(9600);
+  Serial.println("BOOT");
 
   // Special startup modes: {emergency: pot far right, last roast profile: pot far left}
   lastpot = analogRead(POTPIN);
@@ -233,6 +226,7 @@ void loop()
 
     started = true;
     startup_time = millis();
+    Serial.println("BEGIN");
   }
 
   while(true) doRoast();
@@ -386,6 +380,8 @@ void doRoast()
   // Take median temperature
   tempreading = temps[7];
 
+  Serial.println(tempreading);
+
   // Record failed readings
   if(tempreading == 0.0)
     numzeros++;
@@ -493,7 +489,10 @@ void doRoast()
         lcd.print(numzeros);
       }
       else
+      {
         lcd.print(F("Done!"));
+        Serial.println("DONE");
+      }
     }
     else
     {
